@@ -22,7 +22,7 @@ output/*
 !output/km_curve.png
 
 # remove sythetic data generator
-/make_synthetic_data.py
+sythetic_data/make_synthetic_data.py
 
 # OS cruft
 .DS_Store
