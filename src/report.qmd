@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from lifelines import KaplanMeierFitter
-from lifelines.statistics import logrank_test, pairwise_logrank_test
+from lifelines.statistics import pairwise_logrank_test
 
 from create_analytic import B_GROUPS, BUCKET_DAYS
 from paths import ANALYTIC_PATH, KM_FIGURE
@@ -71,11 +71,6 @@ def as_text(df, formats):
     for column, spec in formats.items():
         out[column] = out[column].map(lambda v: "" if pd.isna(v) else format(v, spec))
     return out
-
-
-def all_as_text(df, spec):
-    """Format every cell of a frame with one format spec."""
-    return df.map(lambda v: "" if pd.isna(v) else format(v, spec))
 ```
 
 - **Date created:** `{python} pd.Timestamp.today().date().isoformat()`
@@ -83,7 +78,7 @@ def all_as_text(df, spec):
 - **Purpose:** Examine the relationship between transition time and the probability
   of separating from housing.
 
-- **Last day of available data:** `{python} af["HousedEndDt"].max().date().isoformat()`
+- **Last day of available data:** `{python} af["DataEndDt"].iloc[0].date().isoformat()`
 
 # Data
 
@@ -91,7 +86,7 @@ def all_as_text(df, spec):
 
 - Key fields:
 
-  - **MonthsToTrans**: months from the housing approval date (`DHHSDETDATE`) to the
+  - **MonthsToTrans**: months from the housing approval date (`APPROVALDATE`) to the
     first lease start date (`InitStartDt`). This is the predictor.
 
   - **sep**: whether the member separated from housing.
@@ -127,8 +122,10 @@ n_members = len(af)
 n_deaths = int(af["DeathDt"].notna().sum())
 n_sep = int(af["sep"].sum())
 
-# assumes every member with a death date also has a separation date. 
-# Fail loudly rather than print a decomposition that does not add up.
+# Every member with a death date also has a separation date: create_analytic
+# sets the separation date to DEATHDATE wherever DEATHDATE is populated, so a
+# death is always a separation. Asserted as a regression guard — if that rule
+# changes, fail loudly rather than print a decomposition that does not add up.
 n_deaths_not_separated = int(((af["sep"] == 0) & af["DeathDt"].notna()).sum())
 assert n_deaths_not_separated == 0, (
     f"{n_deaths_not_separated} members have a death date but no separation date, "
@@ -379,11 +376,11 @@ sep_spread = by_bucket["perc_sep"].max() - by_bucket["perc_sep"].min()
 
 ```{python}
 # | code-fold: true
-def fit_buckets(df, group_col="b"):
-    """Fit one Kaplan-Meier curve per group, in the group's category order."""
+def fit_buckets(df):
+    """Fit one Kaplan-Meier curve per transition-time bucket, in bucket order."""
     fits = {}
-    for label in B_GROUPS if group_col == "b" else df[group_col].cat.categories:
-        rows = df[df[group_col] == label]
+    for label in B_GROUPS:
+        rows = df[df["b"] == label]
         if rows.empty:
             continue
         fits[label] = KaplanMeierFitter(label=str(label)).fit(
@@ -499,14 +496,14 @@ def benjamini_hochberg(p_values):
     return pd.Series(np.clip(stepped, 0, 1), index=ordered).reindex(p.index)
 
 
-def pairwise_bh(df, group_col="b", order=None):
+def pairwise_bh(df):
     """Pairwise log-rank p-values with BH adjustment, as a lower-triangle matrix.
 
-    Returns None when fewer than two groups have members, which happens in the
-    smaller demographic subgroups.
+    Returns None when fewer than two buckets have members, in which case there
+    is no pair left to compare.
     """
-    groups = df[group_col].astype(str)
-    present = [g for g in (order or sorted(groups.unique())) if (groups == g).any()]
+    groups = df["b"].astype(str)
+    present = [g for g in B_GROUPS if (groups == g).any()]
     if len(present) < 2:
         return None
 
@@ -532,11 +529,11 @@ def pairwise_bh(df, group_col="b", order=None):
 **Comparing all four buckets**
 
 - These p-values carry a Benjamini-Hochberg adjustment for multiple comparisons,
-  which raises them relative to the unadjusted values and so makes the test less
+  which raises them relative to the unadjusted values and so makes the test more
   conservative than testing a single pair.
 
 ```{python}
-pairwise_bh(af, order=B_GROUPS)
+pairwise_bh(af)
 ```
 
 
@@ -544,8 +541,7 @@ pairwise_bh(af, order=B_GROUPS)
 
 Probability of remaining housed at `{python} ", ".join(str(t) for t in SURVIVAL_TIMES[:-1])`
 and `{python} str(SURVIVAL_TIMES[-1])` months after transitioning into housing, with
-95% confidence intervals in parentheses. A dash means the bucket's follow-up does not
-reach that month.
+95% confidence intervals in parentheses.
 
 ```{python}
 survival_table
@@ -556,13 +552,6 @@ at_12 = {label: survival_at(kmf, [12]).loc[0, "estimate"] for label, kmf in fits
 at_12 = {k: v for k, v in at_12.items() if not np.isnan(v)}
 best_12 = max(at_12, key=at_12.get)
 worst_12 = min(at_12, key=at_12.get)
-
-widths = {}
-for label, kmf in fits.items():
-    row = survival_at(kmf, [12]).loc[0]
-    if not np.isnan(row["estimate"]):
-        widths[label] = row["upper"] - row["lower"]
-widest = max(widths, key=widths.get)
 ```
 
 - At 12 months, the `{python} best_12` bucket has the highest probability of remaining

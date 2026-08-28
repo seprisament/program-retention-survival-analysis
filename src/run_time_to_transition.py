@@ -1,17 +1,21 @@
 """Entry point for the time-to-transition survival analysis.
 
-Runs three steps in order, each depending only on what the previous produced:
+Runs five steps in order, each depending only on what the previous produced:
 
     1. read the member-month panel from CSV
     2. pop              filter to the study population
     3. create_analytic  reduce to one row per member and derive the survival
-                        variables, then write the analytic file
+                        variables
+    4. write the analytic file, which is the input to report.qmd
+    5. render report.qmd
 
-then renders the report from that file.
+Steps 1 through 4 run in Python. Step 5 requires Quarto; without it, the
+analytic file is still produced.
 
     python run_time_to_transition.py
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -20,13 +24,20 @@ import pandas as pd
 
 import create_analytic
 import pop
-from paths import ANALYTIC_PATH, KM_FIGURE, PANEL_CSV, REPORT_QMD, SITE_ROOT
+from paths import (
+    ANALYTIC_PATH,
+    KM_FIGURE,
+    OUTPUT_ROOT,
+    PANEL_CSV,
+    REPORT_HTML,
+    REPORT_QMD,
+)
 
 DATE_COLUMNS = [
     "EFFMNTHBEGIN",
     "EFFMNTHEND",
-    "MINLEASESTART",
-    "DHHSDETDATE",
+    "LEASESTARTDATE",
+    "APPROVALDATE",
     "HOUSESEPDATE",
     "DEATHDATE",
 ]
@@ -37,20 +48,25 @@ def read_panel():
     if not PANEL_CSV.exists():
         raise FileNotFoundError(f"no member-month panel at {PANEL_CSV}")
     panel = pd.read_csv(PANEL_CSV, parse_dates=DATE_COLUMNS)
-    print(f"read {PANEL_CSV.name}: {len(panel):,} rows, {panel['CNDSID'].nunique():,} members")
+    print(f"read {PANEL_CSV.name}: {len(panel):,} rows, {panel['ID'].nunique():,} members")
     return panel
 
 
 def build_analytic_file():
-    """Steps 1 to 3: panel to analytic file."""
+    """Steps 1 to 4: panel to analytic file."""
     panel = read_panel()
 
     population = pop.population_ids(panel)
-    excluded = panel["CNDSID"].nunique() - len(population)
-    print(f"population: {len(population):,} members ({excluded:,} excluded by the filter)")
+    excluded = panel["ID"].nunique() - len(population)
+    print(f"population: {len(population):,} members ({excluded:,} excluded by the SFY2017 filter)")
 
     analytic = create_analytic.add_transition_buckets(
         create_analytic.build_analytic(panel, population)
+    )
+    no_approval = len(population) - len(analytic)
+    print(
+        f"analytic: {len(analytic):,} members "
+        f"({no_approval:,} dropped for a missing approval date)"
     )
 
     ANALYTIC_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -60,27 +76,30 @@ def build_analytic_file():
 
 
 def render():
-    """Render the report locally, into ``src/_site/``.
+    """Step 5: render the report into ``output/``.
 
     Quarto is not importable, so it is invoked as a command. It runs the report
     with the working directory set to the report source's own folder, which is
     why that source sits beside the modules it imports. If Quarto is missing,
     say so rather than failing — the analytic file is already written and is
     the input the report needs.
-
-    This renders only. Publishing the site is a separate, deliberate step:
-    ``cd src && quarto publish gh-pages``.
     """
     if shutil.which("quarto") is None:
         print(
             "\nquarto is not on PATH, so the report was not rendered.\n"
             "Install Quarto 1.4 or later, then run:\n"
-            f"    cd {REPORT_QMD.parent.name} && quarto render"
+            f"    cd {REPORT_QMD.parent.name} && "
+            f"quarto render {REPORT_QMD.name} --output-dir ../output"
         )
         return
 
-    subprocess.run(["quarto", "render"], cwd=REPORT_QMD.parent, check=True)
-    print(f"\nrendered {SITE_ROOT / 'index.html'}")
+    output_dir = os.path.relpath(OUTPUT_ROOT, REPORT_QMD.parent)
+    subprocess.run(
+        ["quarto", "render", REPORT_QMD.name, "--output-dir", output_dir],
+        cwd=REPORT_QMD.parent,
+        check=True,
+    )
+    print(f"\nrendered {REPORT_HTML}")
     print(f"figure for the README: {KM_FIGURE}")
 
 

@@ -16,15 +16,12 @@ PANEL_CSV = SYNTHETIC_DATA_ROOT / "member_month.csv"
 
 # The report source lives beside the modules it imports, because Quarto's
 # jupyter engine executes it with the working directory set to its own folder.
-# It is named index.qmd so the published site serves it at the root.
-REPORT_QMD = SRC_ROOT / "index.qmd"
-# Rendered output. Not committed: the site is published to the gh-pages branch,
-# and this directory is rebuilt on every render.
-SITE_ROOT = SRC_ROOT / "_site"
+REPORT_QMD = SRC_ROOT / "report.qmd"
 
-# The one figure the README embeds. Written when the report renders, so it never
-# drifts from the data behind it, and committed so GitHub can display it.
-KM_FIGURE = PROJECT_ROOT / "readme_diag" / "km_curve.png"
-
+# Everything the pipeline generates.
 OUTPUT_ROOT = Path(os.environ.get("OUTPUT_ROOT", PROJECT_ROOT / "output"))
-ANALYTIC_PATH = OUTPUT_ROOT / "sa_analytic.pkl"
+ANALYTIC_PATH = OUTPUT_ROOT / "analytic_file.pkl"
+REPORT_HTML = OUTPUT_ROOT / "report.html"
+# The one figure the README embeds. Written when the report renders, so it never
+# drifts from the data behind it.
+KM_FIGURE = OUTPUT_ROOT / "km_curve.png"
