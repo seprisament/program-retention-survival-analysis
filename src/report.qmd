@@ -1,0 +1,570 @@
+---
+title: "Time to Transition"
+subtitle: "Survival Analysis"
+format:
+  html:
+    embed-resources: true
+    page-layout: full
+    code-overflow: wrap
+    toc: true
+lightbox: true
+engine: jupyter
+execute:
+  echo: false
+  warning: false
+---
+
+```{python}
+# | code-fold: true
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from lifelines import KaplanMeierFitter
+from lifelines.statistics import logrank_test, pairwise_logrank_test
+
+from create_analytic import B_GROUPS, BUCKET_DAYS
+from paths import ANALYTIC_PATH, KM_FIGURE
+
+af = pd.read_pickle(ANALYTIC_PATH)
+
+assert af[["MonthsToTrans", "sep", "MonthsHoused"]].notna().all().all(), (
+    "MonthsToTrans, sep, and MonthsHoused must all be present"
+)
+
+# Survival probabilities are read at these follow-up times.
+SURVIVAL_TIMES = [12, 24, 36, 48, 60]
+# Histogram bin width, in months.
+BIN_MONTHS = 3
+
+BUCKET_COLORS = dict(zip(B_GROUPS, plt.get_cmap("tab10").colors))
+
+plt.rcParams.update(
+    {
+        "figure.figsize": (9, 5),
+        "axes.grid": True,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "grid.color": "lightgrey",
+        "grid.linewidth": 0.2,
+    }
+)
+
+
+def pct(x, decimals=0):
+    """Format a proportion as a percentage string."""
+    return f"{x:.{decimals}%}"
+
+
+def n_fmt(x):
+    """Format a count with thousands separators."""
+    return f"{x:,}"
+
+
+def as_text(df, formats):
+    """Format numeric columns into display strings.
+
+    Tables are rendered as plain DataFrames rather than through pandas' Styler,
+    which would pull in jinja2.
+    """
+    out = df.copy()
+    for column, spec in formats.items():
+        out[column] = out[column].map(lambda v: "" if pd.isna(v) else format(v, spec))
+    return out
+
+
+def all_as_text(df, spec):
+    """Format every cell of a frame with one format spec."""
+    return df.map(lambda v: "" if pd.isna(v) else format(v, spec))
+```
+
+- **Date created:** `{python} pd.Timestamp.today().date().isoformat()`
+
+- **Purpose:** Examine the relationship between transition time and the probability
+  of separating from housing.
+
+- **Last day of available data:** `{python} af["HousedEndDt"].max().date().isoformat()`
+
+# Data
+
+- Each row is a member, describing their first lease.
+
+- Key fields:
+
+  - **MonthsToTrans**: months from the housing approval date (`DHHSDETDATE`) to the
+    first lease start date (`InitStartDt`). This is the predictor.
+
+  - **sep**: whether the member separated from housing.
+
+    - 1 = separated
+    - 0 = still housed on the last day of data. This is a censored observation:
+      the event never occurred for the member.
+    - **Note:** members who died are counted as separating.
+
+  - **MonthsHoused**: months from the lease start date to either the separation date,
+    or the last day of available data if the member never separated. This is the
+    follow-up time.
+
+The first 10 rows:
+
+```{python}
+# | code-fold: true
+preview = af[["MonthsToTrans", "sep", "MonthsHoused", "DeathDt"]].head(10).copy()
+preview["DeathDt"] = preview["DeathDt"].dt.date.astype(object).where(
+    preview["DeathDt"].notna(), ""
+)
+preview = as_text(preview, {"MonthsToTrans": ".1f", "MonthsHoused": ".1f"})
+preview
+```
+
+# Descriptive stats
+
+Counts and percentages of separations and deaths.
+
+```{python}
+# | code-fold: true
+n_members = len(af)
+n_deaths = int(af["DeathDt"].notna().sum())
+n_sep = int(af["sep"].sum())
+
+# assumes every member with a death date also has a separation date. 
+# Fail loudly rather than print a decomposition that does not add up.
+n_deaths_not_separated = int(((af["sep"] == 0) & af["DeathDt"].notna()).sum())
+assert n_deaths_not_separated == 0, (
+    f"{n_deaths_not_separated} members have a death date but no separation date, "
+    "so separations cannot be split into deaths and non-deaths by subtraction"
+)
+
+n_sep_no_death = n_sep - n_deaths
+perc_sep = n_sep / n_members
+perc_deaths = n_deaths / n_members
+perc_sep_no_death = n_sep_no_death / n_members
+
+summary_t = pd.DataFrame(
+    {
+        "Number of members": [n_fmt(n_members)],
+        "Number of members who died": [n_fmt(n_deaths)],
+        "Number of members who separated but did not die": [n_fmt(n_sep_no_death)],
+        "Percent of members who died": [pct(perc_deaths)],
+        "Percent of members who separated but did not die": [pct(perc_sep_no_death)],
+    }
+).T.rename(columns={0: ""})
+summary_t
+```
+
+- The `{python} pct(perc_sep)` of members who separated includes
+  `{python} pct(perc_deaths)` who died
+  (`{python} pct(perc_sep_no_death)` + `{python} pct(perc_deaths)` =
+  `{python} pct(perc_sep)`).
+
+## Distributions
+
+```{python}
+# | code-fold: true
+QUANTILES = [0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99]
+
+
+def dist_f(series, decimals=1):
+    """Summary statistics for one numeric column, indexed by statistic name."""
+    stats = {
+        "mean": series.mean(),
+        "median": series.median(),
+        "min": series.min(),
+        "max": series.max(),
+        "sd": series.std(),
+    }
+    for q in QUANTILES:
+        stats[f"p{int(q * 100)}"] = series.quantile(q)
+    out = pd.DataFrame({series.name: stats.values()}, index=pd.Index(stats.keys(), name="stat"))
+    return as_text(out, {series.name: f".{decimals}f"})
+
+
+def percent_histogram(ax, values, bin_width, upper=None):
+    """Histogram with the y axis as percent of the values plotted."""
+    top = values.max() if upper is None else upper
+    edges = np.arange(0, np.ceil(top / bin_width) * bin_width + bin_width, bin_width)
+    weights = np.full(len(values), 100 / len(values))
+    ax.hist(values, bins=edges, weights=weights, color="steelblue", edgecolor="white")
+    ax.yaxis.set_major_formatter(lambda v, _: f"{v:.0f}")
+    return edges
+```
+
+**Months to transition** (the predictor)
+
+```{python}
+dist_f(af["MonthsToTrans"], decimals=2)
+```
+
+**Note:** click a chart to enlarge.
+
+```{python}
+months_to_trans = af["MonthsToTrans"]
+trans_sd = months_to_trans.std()
+trans_mean = months_to_trans.mean()
+# Members far out in the right tail are collapsed into a single bar so the bulk of
+# the distribution stays readable.
+tail_cutoff = trans_mean + 3 * trans_sd
+in_tail = months_to_trans >= tail_cutoff
+# NOTE: this percentage is out of all members, while the histogram bars below are
+# percentages of the members actually plotted.
+percent_in_tail = in_tail.mean() * 100
+
+fig, ax = plt.subplots()
+edges = percent_histogram(
+    ax, months_to_trans[~in_tail], BIN_MONTHS, upper=tail_cutoff
+)
+# The tail bar sits one bin beyond the last full bin.
+tail_bar_left = edges[-1]
+ax.bar(
+    tail_bar_left + BIN_MONTHS / 2,
+    percent_in_tail,
+    width=BIN_MONTHS,
+    color="darkred",
+)
+# Label sits just above the tail bar and extends left over empty plot area, so
+# it stays clear of the bars whatever the cutoff turns out to be.
+ax.annotate(
+    f"Over {tail_cutoff:.0f} months\n({percent_in_tail:.1f}%)",
+    xy=(tail_bar_left + BIN_MONTHS / 2, percent_in_tail),
+    xytext=(0, 10),
+    textcoords="offset points",
+    ha="right",
+    color="red",
+)
+ax.set_xticks(np.arange(0, tail_bar_left + BIN_MONTHS * 2, 6))
+ax.set_xlim(0, tail_bar_left + BIN_MONTHS)
+ax.set_xlabel("Months to transition")
+ax.set_ylabel("Percent of members (%)")
+ax.set_title("Distribution of months to transition", fontweight="bold")
+fig.text(
+    0.01,
+    -0.02,
+    f"Bin width is {BIN_MONTHS} months; the final red bar holds every member who "
+    f"transitioned in over {tail_cutoff:.0f} months.",
+    ha="left",
+)
+plt.show()
+```
+
+- `{python} pct(0.50, 0)` of members transitioned within
+  `{python} f'{months_to_trans.quantile(0.50):.1f}'` months and
+  `{python} pct(0.75, 0)` within
+  `{python} f'{months_to_trans.quantile(0.75):.1f}'` months.
+
+**Months housed** (the outcome)
+
+```{python}
+separated = af[af["sep"] == 1]
+not_separated = af[af["sep"] == 0]
+```
+
+Distribution of months housed for members who **separated**
+(n = `{python} n_fmt(len(separated))`).
+
+```{python}
+dist_f(separated["MonthsHoused"])
+```
+
+```{python}
+fig, ax = plt.subplots()
+percent_histogram(ax, separated["MonthsHoused"], BIN_MONTHS)
+ax.set_xticks(np.arange(0, separated["MonthsHoused"].max() + 6, 6))
+ax.set_xlabel("Months housed")
+ax.set_ylabel("Percent of members (%)")
+ax.text(
+    0,
+    1.02,
+    f"Members who separated; N = {len(separated):,}",
+    transform=ax.transAxes,
+)
+plt.show()
+```
+
+- Of the members who separated, `{python} pct(0.50, 0)` remained housed for at least
+  `{python} f'{separated["MonthsHoused"].median():.1f}'` months.
+
+Distribution of months housed for members who did **not** separate
+(n = `{python} n_fmt(len(not_separated))`).
+
+```{python}
+dist_f(not_separated["MonthsHoused"])
+```
+
+```{python}
+fig, ax = plt.subplots()
+percent_histogram(ax, not_separated["MonthsHoused"], BIN_MONTHS)
+ax.set_xticks(np.arange(0, not_separated["MonthsHoused"].max() + 6, 6))
+ax.set_xlabel("Months housed")
+ax.set_ylabel("Percent of members (%)")
+ax.text(
+    0,
+    1.02,
+    f"Members who did not separate; N = {len(not_separated):,}",
+    transform=ax.transAxes,
+)
+plt.show()
+```
+
+## Transition time bucketing
+
+Members are grouped by how long they waited to transition into housing, using a flat
+30-day month:
+
+- **`{python} B_GROUPS[0]` months** — under `{python} n_fmt(BUCKET_DAYS[3])` days
+- **`{python} B_GROUPS[1]` months** — `{python} n_fmt(BUCKET_DAYS[3])` to
+  `{python} n_fmt(BUCKET_DAYS[6] - 1)` days
+- **`{python} B_GROUPS[2]` months** — `{python} n_fmt(BUCKET_DAYS[6])` to
+  `{python} n_fmt(BUCKET_DAYS[12] - 1)` days
+- **`{python} B_GROUPS[3]` months** — `{python} n_fmt(BUCKET_DAYS[12])` days or more
+
+## Separations and deaths by bucket
+
+```{python}
+# | code-fold: true
+by_bucket = (
+    af.groupby("b", observed=True)
+    .apply(
+        lambda g: pd.Series(
+            {
+                "n_members": len(g),
+                "perc_members": len(g) / n_members,
+                "n_deaths": int(g["DeathDt"].notna().sum()),
+                "n_sep": int(g["sep"].sum()),
+                "perc_sep": g["sep"].mean(),
+                "perc_deaths": g["DeathDt"].notna().mean(),
+            }
+        ),
+        include_groups=False,
+    )
+    .reset_index()
+    .rename(columns={"b": "bucket"})
+)
+
+as_text(
+    by_bucket,
+    {
+        "n_members": ",.0f",
+        "n_deaths": ",.0f",
+        "n_sep": ",.0f",
+        "perc_members": ".1%",
+        "perc_sep": ".1%",
+        "perc_deaths": ".1%",
+    },
+).set_index("bucket")
+```
+
+```{python}
+death_spread = by_bucket["perc_deaths"].max() - by_bucket["perc_deaths"].min()
+sep_spread = by_bucket["perc_sep"].max() - by_bucket["perc_sep"].min()
+```
+
+- Death rates span `{python} pct(by_bucket["perc_deaths"].min(), 1)` to
+  `{python} pct(by_bucket["perc_deaths"].max(), 1)` across buckets, a spread of
+  `{python} pct(death_spread, 1)`. The narrower that spread, the weaker the case that
+  death confounds the comparison, and the safer it is to keep members who died.
+
+- Separation rates span `{python} pct(by_bucket["perc_sep"].min(), 1)` to
+  `{python} pct(by_bucket["perc_sep"].max(), 1)`, a spread of
+  `{python} pct(sep_spread, 1)`.
+
+# Kaplan-Meier curves
+
+- The Kaplan-Meier curve shows the probability of remaining housed over time.
+
+- A curve sitting below another means that group has a lower probability of remaining
+  housed, and so a higher probability of separating, at any given time.
+
+- Overlapping curves suggest no difference in separation probabilities between the
+  groups.
+
+```{python}
+# | code-fold: true
+def fit_buckets(df, group_col="b"):
+    """Fit one Kaplan-Meier curve per group, in the group's category order."""
+    fits = {}
+    for label in B_GROUPS if group_col == "b" else df[group_col].cat.categories:
+        rows = df[df[group_col] == label]
+        if rows.empty:
+            continue
+        fits[label] = KaplanMeierFitter(label=str(label)).fit(
+            rows["MonthsHoused"], rows["sep"]
+        )
+    return fits
+
+
+def plot_km(ax, fits):
+    """Step plot of fitted survival curves."""
+    for label, kmf in fits.items():
+        sf = kmf.survival_function_
+        ax.step(
+            sf.index,
+            sf.iloc[:, 0],
+            where="post",
+            label=str(label),
+            color=BUCKET_COLORS.get(label),
+        )
+    ax.yaxis.set_major_formatter(lambda v, _: f"{v:.0%}")
+    ax.set_xlabel("Months housed")
+    return ax
+
+
+def km_lower_limit(fits, pad=0.05):
+    """A y-axis floor just below the lowest point any curve reaches."""
+    lowest = min(kmf.survival_function_.iloc[:, 0].min() for kmf in fits.values())
+    return max(0.0, np.floor((lowest - pad) * 20) / 20)
+
+
+fits = fit_buckets(af)
+```
+
+## All members
+
+**Note:** click a chart to enlarge.
+
+```{python}
+fig, ax = plt.subplots()
+plot_km(ax, fits)
+ax.set_ylim(km_lower_limit(fits), 1)
+ax.set_ylabel("Probability of remaining housed")
+ax.set_title(
+    "Probability of remaining housed by transition time bucket", fontweight="bold"
+)
+ax.legend(title="Months to transition", frameon=False)
+
+# Also saved standalone, so the README can embed the same figure.
+KM_FIGURE.parent.mkdir(parents=True, exist_ok=True)
+fig.savefig(KM_FIGURE, dpi=150, bbox_inches="tight")
+
+plt.show()
+```
+
+```{python}
+# | code-fold: true
+def survival_at(kmf, times):
+    """Survival estimate and 95% CI at each time.
+
+    Missing past the group's last follow-up time. ``predict`` would carry the
+    last estimate forward instead, which reads as though the group were still
+    being observed.
+    """
+    ci = kmf.confidence_interval_survival_function_
+    last_observed = kmf.timeline.max()
+    rows = []
+    for t in times:
+        if t > last_observed:
+            rows.append({"months": t, "estimate": np.nan, "lower": np.nan, "upper": np.nan})
+        else:
+            lower, upper = ci.asof(t)
+            rows.append(
+                {
+                    "months": t,
+                    "estimate": float(kmf.predict(t)),
+                    "lower": float(lower),
+                    "upper": float(upper),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+survival_table = pd.DataFrame(
+    {
+        label: [
+            "—"
+            if np.isnan(r.estimate)
+            else f"{r.estimate:.0%} ({r.lower:.0%}, {r.upper:.0%})"
+            for r in survival_at(kmf, SURVIVAL_TIMES).itertuples()
+        ]
+        for label, kmf in fits.items()
+    },
+    index=[f"{t} months" for t in SURVIVAL_TIMES],
+).T
+survival_table.index.name = "Transition time (months)"
+```
+
+```{python}
+# | code-fold: true
+def benjamini_hochberg(p_values):
+    """Benjamini-Hochberg adjusted p-values.
+
+    Six pairwise comparisons over four buckets inflates the chance of a false
+    positive, so the p-values are adjusted for multiple comparisons. lifelines
+    does not do this, so it is applied here.
+    """
+    p = pd.Series(p_values, dtype=float)
+    ordered = p.sort_values().index
+    ranks = np.arange(1, len(p) + 1)
+    scaled = p[ordered].to_numpy() * len(p) / ranks
+    # Enforce monotonicity from the largest p-value down.
+    stepped = np.minimum.accumulate(scaled[::-1])[::-1]
+    return pd.Series(np.clip(stepped, 0, 1), index=ordered).reindex(p.index)
+
+
+def pairwise_bh(df, group_col="b", order=None):
+    """Pairwise log-rank p-values with BH adjustment, as a lower-triangle matrix.
+
+    Returns None when fewer than two groups have members, which happens in the
+    smaller demographic subgroups.
+    """
+    groups = df[group_col].astype(str)
+    present = [g for g in (order or sorted(groups.unique())) if (groups == g).any()]
+    if len(present) < 2:
+        return None
+
+    result = pairwise_logrank_test(df["MonthsHoused"], groups, df["sep"])
+    adjusted = benjamini_hochberg(result.summary["p"])
+
+    # Lower triangle only: the later group of each pair names the row, the
+    # earlier one the column, so every pair lands below the diagonal.
+    rank = {group: i for i, group in enumerate(present)}
+    matrix = pd.DataFrame(index=present[1:], columns=present[:-1], dtype=object)
+    for (left, right), value in adjusted.items():
+        earlier, later = sorted((left, right), key=rank.get)
+        matrix.loc[later, earlier] = f"{value:.3f}"
+    return matrix.fillna("")
+```
+
+### Log-rank test
+
+- The log-rank test evaluates the null hypothesis that the survival distributions of
+  the groups do not differ. Using a p-value at or below 0.05 is evidence that the curves
+  differ.
+
+**Comparing all four buckets**
+
+- These p-values carry a Benjamini-Hochberg adjustment for multiple comparisons,
+  which raises them relative to the unadjusted values and so makes the test less
+  conservative than testing a single pair.
+
+```{python}
+pairwise_bh(af, order=B_GROUPS)
+```
+
+
+### Probability of remaining housed
+
+Probability of remaining housed at `{python} ", ".join(str(t) for t in SURVIVAL_TIMES[:-1])`
+and `{python} str(SURVIVAL_TIMES[-1])` months after transitioning into housing, with
+95% confidence intervals in parentheses. A dash means the bucket's follow-up does not
+reach that month.
+
+```{python}
+survival_table
+```
+
+```{python}
+at_12 = {label: survival_at(kmf, [12]).loc[0, "estimate"] for label, kmf in fits.items()}
+at_12 = {k: v for k, v in at_12.items() if not np.isnan(v)}
+best_12 = max(at_12, key=at_12.get)
+worst_12 = min(at_12, key=at_12.get)
+
+widths = {}
+for label, kmf in fits.items():
+    row = survival_at(kmf, [12]).loc[0]
+    if not np.isnan(row["estimate"]):
+        widths[label] = row["upper"] - row["lower"]
+widest = max(widths, key=widths.get)
+```
+
+- At 12 months, the `{python} best_12` bucket has the highest probability of remaining
+  housed (`{python} pct(at_12[best_12])`) and the `{python} worst_12` bucket the lowest
+  (`{python} pct(at_12[worst_12])`).

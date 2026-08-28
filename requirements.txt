@@ -1,0 +1,6 @@
+pandas
+lifelines
+matplotlib
+
+# Quarto's jupyter engine runs the report's chunks through a Jupyter kernel.
+jupyter

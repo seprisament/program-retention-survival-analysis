@@ -1,0 +1,27 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Quarto. The rendered site is published to the gh-pages branch, never committed
+# here; the only rendered artifact tracked on main is readme_diag/km_curve.png.
+_site/
+*_cache/
+*_files/
+.quarto/
+*.html
+*.pdf
+
+
+# Generated output. The rendered report in report/ is committed; the analytic
+# file is not, since the pipeline rebuilds it from the committed panel.
+output/
+
+# remove sythetic data generator
+/make_synthetic_data.py
+# OS cruft
+.DS_Store
+Thumbs.db
