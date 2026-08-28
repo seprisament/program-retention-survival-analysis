@@ -36,7 +36,7 @@ Note: The data included in this repository were generated to reproduce the struc
 
 ### Data Processing
 
-After resolving data-quality issues in the member-month data, I created an analytic dataset with one row per member. Then using the information from each member's first lease in the program, I derived the variables used in the survival analysis (described [Methods](#Method)).
+After resolving data-quality issues in the member-month data, I created an analytic dataset with one row per member. Then, using the information from each member's first lease in the program, I derived the variables used in the survival analysis (described [Methods](#Method)).
 
 #### 1. Define the Analysis Population
 
@@ -96,7 +96,7 @@ My takeaway from this analysis was that there was not enough evidence to justify
 src/
 ├── run_time_to_transition.py   # Pipeline entry point: data -> population -> analytic file -> report
 ├── pop.py                      # Filter data to the study population IDs
-├── create_analytic.py          # Clean data; filterts to one row per member; derives survival variables
+├── create_analytic.py          # Clean data; filters to one row per member; derives survival variables
 ├── paths.py                    # Define project paths
 ├── query_sql.py                # Original database query; reference only
 └── report.qmd                  # Descriptive statistics, KM estimation, log-rank tests
