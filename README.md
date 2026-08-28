@@ -2,7 +2,7 @@
 
 A preliminary survival analysis I led at Mathematica that examined the association between a key predictor and time to an event, where most events had not yet occurred by the end of the study period.
 
-While the analysis methodology and workflow closely reflect the original project, all data, numbers, and findings in this repository are fabricated. I stored synthetic data in [synthetic_data/](synthetic_data) so the full analysis pipeline can be run. See [Project Structure](#project-structure) below.
+While the analysis methodology and workflow closely reflect the original project, all data, numbers, and findings in this repository are fabricated. I stored synthetic data in [synthetic_data/](synthetic_data) so the full analysis pipeline can be run.
 
 ## Background
 
@@ -82,13 +82,13 @@ Two findings stood out:
 1. Members who transitioned in under three months had similar retention to those who transitioned in three to six months or six to twelve months. Their Kaplan-Meier curves largely overlapped, and none of the pairwise comparisons among these three groups approached statistical significance.
 2. Members who took 12 or more months to transition appeared to have lower retention than members in the other three groups. Each pairwise comparison between the 12+ month group and the other transition-time groups was statistically significant.
 
-My takeaway from this analysis was that there was not enough evidence to justify investing in an under-three-month transition initiative based on retention alone. While members with 12+ month transition times did appear to have lower retention, I believed the more useful next step was to understand why these transitions were taking so long in the first place. Identifying the factors driving lengthy transitions could help determine whether there was a meaningful, actionable opportunity to improve retention.
+My takeaway from this analysis was that there was not enough evidence to justify investing in an under-three-month transition initiative based on retention alone. While members with 12+ month transition times did appear to have lower retention, I believed the more useful next step was to understand why these transitions were taking so long in the first place. Identifying the factors driving lengthy transitions could help determine whether there was a more meaningful way to improve retention.
 
 ## Limitations
 
-**Association, not causation** This was a preliminary observational analysis and does not establish that longer transition times cause lower retention. Transition times were not randomly assigned, so members who took longer to transition may differ systematically from those who were housed more quickly. Those same differences could also affect retention. Baseline clinical acuity is one plausible example: if members with more complex clinical needs both took longer to house and were more likely to leave the program, the observed relationship between transition time and retention could reflect underlying differences in clinical acuity rather than an effect of transition time itself. In that case, simply accelerating the transition would not necessarily improve retention. Incorporating member-level clinical risk scores and stratifying by acuity would help assess this possibility.
+**Association, not causation:** This was a preliminary observational analysis and does not establish that longer transition times cause lower retention. Transition times were not randomly assigned, so members who took longer to transition may differ systematically from those who were housed more quickly. Those same differences could also affect retention. Baseline clinical acuity is one plausible example: if members with more complex clinical needs both took longer to house and were more likely to leave the program, the observed relationship between transition time and retention could reflect underlying differences in clinical acuity rather than an effect of transition time itself. In that case, simply accelerating the transition would not necessarily improve retention. Incorporating member-level clinical risk scores and stratifying by acuity would help assess this possibility.
 
-**The predictor was binned** Treating transition time as four categories rather than a continuous variable discards information, and the cutpoints at 3, 6, and 12 months were chosen for operational relevance rather than anything in the data. A Cox proportional hazards model with transition time entered continuously, and clinical risk score included as a covariate, would be a natural next step.
+**The predictor was binned:** Treating transition time as four categories rather than a continuous variable discards information, and the cutpoints at 3, 6, and 12 months were chosen for operational relevance rather than anything in the data. A Cox proportional hazards model with transition time entered continuously, and clinical risk score included as a covariate, would be a natural next step.
 
 ## Project Structure
 
@@ -134,4 +134,4 @@ The pipeline will:
 4. Save the analytic file to `output/`, which is the input of `report.qmd`.
 5. Render `report.qmd` to `output/`.
 
-Steps 1 through 4 run in Python. Step 5 requires Quarto; without it, the analytic file is still produced and the pipeline prints a message to install Quarto to create the report.
+Steps 1 through 4 run in Python. Step 5 requires Quarto.

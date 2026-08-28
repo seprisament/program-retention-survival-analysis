@@ -21,8 +21,8 @@ _site/
 output/*
 !output/km_curve.png
 
-# remove sythetic data generator
-sythetic_data/make_synthetic_data.py
+# The synthetic data generator is not distributed; only the panel it writes is.
+synthetic_data/make_synthetic_data.py
 
 # OS cruft
 .DS_Store
