@@ -1,6 +1,6 @@
 """Entry point for the time-to-transition survival analysis.
 
-Runs five steps in order, each depending only on what the previous produced:
+Runs five steps in order, each depending on what the previous produced:
 
     1. read the member-month panel from CSV
     2. pop              filter to the study population
@@ -8,9 +8,6 @@ Runs five steps in order, each depending only on what the previous produced:
                         variables
     4. write the analytic file, which is the input to report.qmd
     5. render report.qmd
-
-Steps 1 through 4 run in Python. Step 5 requires Quarto; without it, the
-analytic file is still produced.
 
     python run_time_to_transition.py
 """
@@ -53,7 +50,7 @@ def read_panel():
 
 
 def build_analytic_file():
-    """Steps 1 to 4: panel to analytic file."""
+    """Build analytic file."""
     panel = read_panel()
 
     population = pop.population_ids(panel)
@@ -76,13 +73,7 @@ def build_analytic_file():
 
 
 def render():
-    """Step 5: render the report into ``output/``.
-
-    Quarto is not importable, so it is invoked as a command. It runs the report
-    with the working directory set to the report source's own folder, which is
-    why that source sits beside the modules it imports. If Quarto is missing,
-    say so rather than failing — the analytic file is already written and is
-    the input the report needs.
+    """Render the report into ``output/``.
     """
     if shutil.which("quarto") is None:
         print(

@@ -1,4 +1,4 @@
-"""Every path the pipeline reads or writes, defined once.
+"""Every path the pipeline reads or writes.
 
 ``OUTPUT_ROOT`` may be set in the environment to redirect generated files;
 it defaults to ``output/`` inside the project.

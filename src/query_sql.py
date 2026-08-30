@@ -2,9 +2,9 @@
 
 This is not part of the pipeline and nothing imports it.
 
-This analysis used to read its data from a reporting warehouse: a single
+This analysis used to read its data from a state's database: a single
 ``MemberMonth`` table, one row per member per enrollment month, queried with
-credentials supplied through the environment and never written into the code.
+credentials supplied through the environment.
 That warehouse is no longer accessible, so the pipeline now starts from a CSV
 extract of the same panel instead — see ``run_time_to_transition.py``.
 

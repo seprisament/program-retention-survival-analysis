@@ -19,7 +19,7 @@ DATE_COLUMNS = ["DeathDt", "APPROVALDATE", "InitStartDt", "FirstSepDt"]
 def build_analytic(member_month, population):
     """Reduce the member-month panel to one row per member.
 
-    Each row carries the two quantities the survival analysis needs — how long
+    Each row carries the two fields the survival analysis needs — how long
     the member waited to transition into housing, and how long they then
     stayed housed.
 
@@ -68,7 +68,7 @@ def build_analytic(member_month, population):
     )
 
     # Data quality: members approved through software that did not record an
-    # approval date. Without it there is no transition time.
+    # approval date.
     analytic = analytic[analytic["APPROVALDATE"].notna()].reset_index(drop=True)
 
     # Data quality: a reporting lag can leave the separation date later than
@@ -90,9 +90,7 @@ def build_analytic(member_month, population):
     # the data. Members who died count as separating.
     analytic["sep"] = analytic["FirstSepDt"].notna().astype(int)
 
-    # The last day the extract covers, carried onto every row. Reporting it
-    # from here is exact; recovering it downstream from HousedEndDt would only
-    # work as long as at least one member is censored.
+    # The last day the extract covers, carried onto every row.
     analytic["DataEndDt"] = last_day
 
     # Follow-up time: lease start to separation, or to the end of the data for
